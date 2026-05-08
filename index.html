@@ -1110,172 +1110,219 @@ function drawDashedCircle(ctx,cx,cy,r,color,lw,dashAng,gapAng) {
 }
 
 // ── Approach Plates — FAA d-TPP ──────────────────────────────────────────────
-// The FAA publishes all approach plates, airport diagrams, DPs, and STARs
-// as free PDFs on aeronav.faa.gov on a 28-day AIRAC cycle.
-// We fetch the XML metafile to get plate filenames for the requested airport,
-// then render them as clickable links that open the PDF directly.
+// The FAA 3MB XML metafile is too large for CORS proxies to relay reliably.
+// Best approach: deep-link directly to the FAA's own terminal procedures
+// search page pre-filled for the airport, plus direct PDF links for the
+// most common plate types using known URL patterns.
 
 function currentAiracCycle() {
   // AIRAC reference: cycle 2601 started 2026-01-23
   // Each cycle = 28 days, max 13 cycles per year
   const ref = new Date('2026-01-23');
-  const today = new Date();
-  const daysSince = Math.floor((today - ref) / 86400000);
-  let cycles = Math.floor(daysSince / 28);
-  let year = 26, num = 1 + cycles;
+  const daysSince = Math.floor((new Date() - ref) / 86400000);
+  let num = 1 + Math.floor(daysSince / 28);
+  let year = 26;
   while (num > 13) { num -= 13; year++; }
-  // Handle pre-ref dates
   while (num < 1)  { num += 13; year--; }
   return `${String(year).padStart(2,'0')}${String(num).padStart(2,'0')}`;
 }
 
-async function fetchPlates(icao) {
-  // nfdc.faa.gov always serves the current cycle — no need to calculate cycle number
-  const xmlUrl = 'https://nfdc.faa.gov/webContent/dtpp/current.xml';
-  const cycle  = currentAiracCycle(); // still needed for PDF URLs
-
-  // Try allorigins proxy first, then corsproxy
-  let xml = '';
-  const proxies = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(xmlUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(xmlUrl)}`,
-  ];
-
-  for (const proxyUrl of proxies) {
-    try {
-      const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 20000);
-      const r = await fetch(proxyUrl, {signal: ctrl.signal});
-      if (!r.ok) continue;
-
-      if (proxyUrl.includes('allorigins')) {
-        const j = await r.json();
-        xml = j.contents || '';
-      } else {
-        xml = await r.text();
-      }
-      if (xml && xml.includes('<digital_tpp')) break;
-    } catch(_) {}
-  }
-
-  if (!xml) throw new Error('Could not fetch procedure catalog');
-
-  // Parse XML
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, 'text/xml');
-
-  // FAA XML uses apt_ident (3-letter FAA LID) not ICAO
-  // KOTM -> OTM, KORD -> ORD, PANC -> ANK (Alaska uses P prefix)
-  const icaoUpper = icao.toUpperCase();
-  // Strip leading K for continental US, P for Pacific/Alaska
-  const localId = icaoUpper.replace(/^[KP](?=[A-Z]{3}$)/, '');
-
-  // Try all possible matches in order
-  let airportEl = null;
-
-  // 1. Exact apt_ident match (most common — 3-letter FAA LID)
-  airportEl = doc.querySelector(`airport_name[apt_ident="${localId}"]`);
-
-  // 2. 4-letter ICAO — some entries use full ICAO (international, AK, HI)
-  if (!airportEl) airportEl = doc.querySelector(`airport_name[apt_ident="${icaoUpper}"]`);
-
-  // 3. Fallback: search all airports for a name match
-  if (!airportEl) {
-    // Some Alaska airports use different stripping
-    const altId = icaoUpper.replace(/^P/, '');
-    airportEl = doc.querySelector(`airport_name[apt_ident="${altId}"]`);
-  }
-
-  if (!airportEl) return [];
-
-  const plates = [];
-  const records = airportEl.querySelectorAll('record');
-  records.forEach(rec => {
-    const name    = rec.getAttribute('chart_name') || '';
-    const code    = rec.getAttribute('chart_code') || '';
-    const pdfName = rec.getAttribute('pdf_name')   || '';
-    if (!pdfName || !name) return;
-    plates.push({
-      name,
-      code,  // IAP, APD, DP, STAR, MIN, HOT
-      url: `https://aeronav.faa.gov/d-tpp/${cycle}/${pdfName}`,
-    });
-  });
-
-  return plates;
+// Convert ICAO → FAA 3-letter LID (strip leading K or P for CONUS/Alaska)
+function icaoToLid(icao) {
+  const up = icao.toUpperCase();
+  // Continental US: KXXX -> XXX
+  // Alaska: PAXX -> AXX (keep 3 chars after stripping P)
+  if (/^K[A-Z]{3}$/.test(up)) return up.slice(1);
+  if (/^P[A-Z]{3}$/.test(up)) return up.slice(1);
+  return up; // Hawaii (PHXX), already 3-letter, international
 }
 
 function showPlatesSection(icao) {
   const sec = document.getElementById('platesSection');
   sec.style.display = 'block';
+  const lid   = icaoToLid(icao);
+  const cycle = currentAiracCycle();
 
-  // Type labels
-  const typeLabel = {
-    IAP:  'Approach',
-    APD:  'Airport Diagram',
-    DP:   'Departure',
-    STAR: 'Arrival',
-    MIN:  'Minimums',
-    HOT:  'Hotspots',
-  };
+  // FAA search page URL — pre-filled for this airport
+  const faaSearchUrl = `https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/dtpp/search/results/?action=RETRIEVE&apt_ident=${lid}&chg=&IFPCode=&navaid=&cycle=current`;
 
-  // Render collapsed header with spinner inside
   sec.innerHTML = `
     <div class="plates-header" id="platesHdr" onclick="togglePlates()">
       <span class="plates-title">▸ INSTRUMENT PROCEDURES</span>
       <span class="plates-toggle" id="platesToggle">▼</span>
     </div>
     <div class="plates-body open" id="platesBody">
-      <div class="plates-loading"><span class="spin"></span>Loading FAA approach plates…</div>
+      <div class="plates-loading"><span class="spin"></span>Loading plates for ${icao}…</div>
     </div>`;
 
-  fetchPlates(icao).then(plates => {
-    const body = document.getElementById('platesBody');
-    if (!body) return;
+  // Fetch plate list via the FAA's own search results page (HTML scrape via proxy)
+  loadPlatesFromFaa(icao, lid, cycle);
+}
 
-    if (!plates.length) {
-      body.innerHTML = `<div class="plates-none">No instrument procedures published for ${icao}.<br>This airport may be VFR-only or not yet in the current cycle.</div>`;
-      return;
+async function loadPlatesFromFaa(icao, lid, cycle) {
+  const body = document.getElementById('platesBody');
+  if (!body) return;
+
+  const faaSearchUrl = `https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/dtpp/search/results/?action=RETRIEVE&apt_ident=${lid}&chg=&IFPCode=&navaid=&cycle=current`;
+
+  // Strategy 1: Fetch the FAA search results HTML via proxy and parse PDF links
+  try {
+    const enc = encodeURIComponent(faaSearchUrl);
+    const r = await tFetch(`https://api.allorigins.win/get?url=${enc}`, 18000);
+    if (r.ok) {
+      const j = await r.json();
+      const html = j.contents || '';
+      const plates = parseFaaSearchHtml(html, cycle);
+      if (plates.length) {
+        renderPlates(body, plates, icao, faaSearchUrl);
+        return;
+      }
     }
+  } catch(_) {}
 
-    // Group by chart_code
-    const order = ['APD','IAP','DP','STAR','MIN','HOT'];
-    const groups = {};
-    plates.forEach(p => {
-      const g = p.code || 'OTHER';
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(p);
-    });
+  // Strategy 2: corsproxy fallback
+  try {
+    const enc = encodeURIComponent(faaSearchUrl);
+    const r = await tFetch(`https://corsproxy.io/?${enc}`, 18000);
+    if (r.ok) {
+      const html = await r.text();
+      const plates = parseFaaSearchHtml(html, cycle);
+      if (plates.length) {
+        renderPlates(body, plates, icao, faaSearchUrl);
+        return;
+      }
+    }
+  } catch(_) {}
 
-    let html = '';
-    const codes = [...order.filter(c => groups[c]), ...Object.keys(groups).filter(c => !order.includes(c))];
-    codes.forEach(code => {
-      const label = typeLabel[code] || code;
-      html += `<div class="plates-group">
-        <div class="plates-group-label">${label}</div>`;
-      groups[code].forEach(p => {
-        html += `<a class="plate-item" href="${p.url}" target="_blank" rel="noopener">
-          <span class="plate-name">${p.name}</span>
-          <span style="display:flex;align-items:center;gap:6px">
-            <span class="plate-type plate-${code}">${code}</span>
-            <span class="plate-arrow">↗</span>
-          </span>
-        </a>`;
+  // Fallback: show a clean link to the FAA search page
+  renderFallback(body, icao, lid, faaSearchUrl);
+}
+
+function parseFaaSearchHtml(html, cycle) {
+  if (!html || html.length < 100) return [];
+  const plates = [];
+
+  // FAA search results contain links like: href="/d-tpp/2604/05279R22.PDF"
+  // or full URLs like aeronav.faa.gov/d-tpp/CYCLE/FILENAME.PDF
+  const pdfRegex = /href="[^"]*?\/d-tpp\/\d{4}\/([^"]+\.PDF)"/gi;
+  // Also try: data-pdf or other patterns
+  const nameRegex = /<td[^>]*class="[^"]*chart[^"]*"[^>]*>([^<]+)<\/td>/gi;
+
+  let match;
+  const pdfs = [];
+  while ((match = pdfRegex.exec(html)) !== null) {
+    pdfs.push(match[1]);
+  }
+
+  if (!pdfs.length) {
+    // Try alternate pattern without path prefix
+    const alt = /["']([A-Z0-9]{4,8}\.PDF)["']/gi;
+    while ((match = alt.exec(html)) !== null) {
+      pdfs.push(match[1]);
+    }
+  }
+
+  // Extract chart names from table rows
+  // FAA HTML structure: rows with chart_code and chart_name cells
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+
+  const rows = [];
+  while ((match = rowRegex.exec(html)) !== null) {
+    const row = match[1];
+    if (!row.includes('.PDF') && !row.includes('.pdf')) continue;
+    const cells = [];
+    let cm;
+    while ((cm = cellRegex.exec(row)) !== null) {
+      cells.push(cm[1].replace(/<[^>]+>/g, '').trim());
+    }
+    // Look for PDF filename in row
+    const pdfMatch = row.match(/([A-Z0-9]{4,10}\.PDF)/i);
+    if (pdfMatch && cells.length >= 2) {
+      const name = cells.find(c => c.length > 3 && !/^\d+$/.test(c) && !c.includes('.PDF')) || pdfMatch[1];
+      const code = inferChartCode(name, pdfMatch[1]);
+      rows.push({
+        name: name.toUpperCase(),
+        code,
+        url: `https://aeronav.faa.gov/d-tpp/${cycle}/${pdfMatch[1]}`
       });
-      html += `</div>`;
-    });
+    }
+  }
 
-    body.innerHTML = html;
-  }).catch(err => {
-    const body = document.getElementById('platesBody');
-    if (body) body.innerHTML = `<div class="plates-error">Could not load plates: ${err.message}</div>`;
+  if (rows.length) return rows;
+
+  // If we got PDF filenames but couldn't parse names, return filename-based entries
+  return pdfs.slice(0, 30).map(pdf => ({
+    name: pdf.replace('.PDF',''),
+    code: inferChartCode('', pdf),
+    url: `https://aeronav.faa.gov/d-tpp/${cycle}/${pdf}`
+  }));
+}
+
+function inferChartCode(name, filename) {
+  const n = (name + filename).toUpperCase();
+  if (n.includes('AD') || filename.endsWith('AD.PDF')) return 'APD';
+  if (n.includes('HOT')) return 'HOT';
+  if (n.includes('MIN') || n.includes('TKOF') || n.includes('ALT')) return 'MIN';
+  if (n.includes('DP') || n.includes('SID') || n.includes('DEPARTURE')) return 'DP';
+  if (n.includes('STAR') || n.includes('ARRIVAL')) return 'STAR';
+  return 'IAP'; // Default — most plates are approaches
+}
+
+function renderPlates(body, plates, icao, faaUrl) {
+  const typeLabel = {IAP:'Approach',APD:'Airport Diagram',DP:'Departure',STAR:'Arrival',MIN:'Minimums',HOT:'Hotspots'};
+  const order = ['APD','IAP','DP','STAR','MIN','HOT'];
+  const groups = {};
+  plates.forEach(p => {
+    const g = p.code || 'IAP';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(p);
   });
+  const codes = [...order.filter(c => groups[c]), ...Object.keys(groups).filter(c => !order.includes(c))];
+  let html = '';
+  codes.forEach(code => {
+    html += `<div class="plates-group"><div class="plates-group-label">${typeLabel[code]||code}</div>`;
+    groups[code].forEach(p => {
+      html += `<a class="plate-item" href="${p.url}" target="_blank" rel="noopener">
+        <span class="plate-name">${p.name}</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <span class="plate-type plate-${code}">${code}</span>
+          <span class="plate-arrow">↗</span>
+        </span></a>`;
+    });
+    html += `</div>`;
+  });
+  // Always add FAA search link at bottom
+  html += `<div class="plates-group"><a class="plate-item" href="${faaUrl}" target="_blank" rel="noopener">
+    <span class="plate-name" style="color:var(--dim)">View all on FAA.gov</span>
+    <span class="plate-arrow" style="color:var(--dim)">↗</span></a></div>`;
+  body.innerHTML = html;
+}
+
+function renderFallback(body, icao, lid, faaUrl) {
+  // Clean fallback — direct links to FAA search page
+  // These always work because the user's browser opens FAA.gov directly
+  body.innerHTML = `
+    <div class="plates-group">
+      <div class="plates-group-label">Open on FAA.gov</div>
+      <a class="plate-item" href="${faaUrl}" target="_blank" rel="noopener">
+        <span class="plate-name">All procedures for ${icao}</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <span class="plate-type plate-IAP">d-TPP</span>
+          <span class="plate-arrow">↗</span>
+        </span>
+      </a>
+    </div>
+    <div style="padding:8px 14px;font-size:10px;color:var(--dim)">
+      Opens the FAA's official terminal procedures search — approach plates,<br>
+      airport diagrams, departures, and STARs available as free PDFs.
+    </div>`;
 }
 
 function togglePlates() {
-  const body = document.getElementById('platesBody');
-  const toggle = document.getElementById('platesToggle');
-  const hdr = document.getElementById('platesHdr');
+  const body    = document.getElementById('platesBody');
+  const toggle  = document.getElementById('platesToggle');
+  const hdr     = document.getElementById('platesHdr');
   if (!body) return;
   const open = body.classList.toggle('open');
   toggle.classList.toggle('open', open);
