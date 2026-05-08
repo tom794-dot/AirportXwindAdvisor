@@ -1130,33 +1130,62 @@ function currentAiracCycle() {
 }
 
 async function fetchPlates(icao) {
-  const cycle = currentAiracCycle();
-  const xmlUrl = `https://aeronav.faa.gov/d-tpp/${cycle}/xml/d-TPP_Metafile.xml`;
+  // nfdc.faa.gov always serves the current cycle — no need to calculate cycle number
+  const xmlUrl = 'https://nfdc.faa.gov/webContent/dtpp/current.xml';
+  const cycle  = currentAiracCycle(); // still needed for PDF URLs
 
-  // Fetch via proxy — aeronav.faa.gov needs CORS proxy for browser requests
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(xmlUrl)}`;
-  const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), 20000);
+  // Try allorigins proxy first, then corsproxy
+  let xml = '';
+  const proxies = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(xmlUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(xmlUrl)}`,
+  ];
 
-  const r = await fetch(proxyUrl, {signal: ctrl.signal});
-  if (!r.ok) throw new Error('HTTP ' + r.status);
+  for (const proxyUrl of proxies) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(proxyUrl, {signal: ctrl.signal});
+      if (!r.ok) continue;
 
-  const j = await r.json();
-  const xml = j.contents || '';
-  if (!xml) throw new Error('Empty response');
+      if (proxyUrl.includes('allorigins')) {
+        const j = await r.json();
+        xml = j.contents || '';
+      } else {
+        xml = await r.text();
+      }
+      if (xml && xml.includes('<digital_tpp')) break;
+    } catch(_) {}
+  }
 
-  // Parse XML — find airport matching our ICAO
+  if (!xml) throw new Error('Could not fetch procedure catalog');
+
+  // Parse XML
   const parser = new DOMParser();
   const doc = parser.parseFromString(xml, 'text/xml');
 
-  // Try icao_ident attribute first, then apt_ident
+  // FAA XML uses apt_ident (3-letter FAA LID) not ICAO
+  // KOTM -> OTM, KORD -> ORD, PANC -> ANK (Alaska uses P prefix)
   const icaoUpper = icao.toUpperCase();
-  let airportEl = doc.querySelector(`airport[icao_ident="${icaoUpper}"]`);
+  // Strip leading K for continental US, P for Pacific/Alaska
+  const localId = icaoUpper.replace(/^[KP](?=[A-Z]{3}$)/, '');
+
+  // Try all possible matches in order
+  let airportEl = null;
+
+  // 1. Exact apt_ident match (most common — 3-letter FAA LID)
+  airportEl = doc.querySelector(`airport_name[apt_ident="${localId}"]`);
+
+  // 2. 4-letter ICAO — some entries use full ICAO (international, AK, HI)
+  if (!airportEl) airportEl = doc.querySelector(`airport_name[apt_ident="${icaoUpper}"]`);
+
+  // 3. Fallback: search all airports for a name match
   if (!airportEl) {
-    // Some airports use 3-letter ident — strip leading K/P
-    const local = icaoUpper.replace(/^[KP]/, '');
-    airportEl = doc.querySelector(`airport[apt_ident="${local}"]`);
+    // Some Alaska airports use different stripping
+    const altId = icaoUpper.replace(/^P/, '');
+    airportEl = doc.querySelector(`airport_name[apt_ident="${altId}"]`);
   }
+
   if (!airportEl) return [];
 
   const plates = [];
@@ -1168,7 +1197,7 @@ async function fetchPlates(icao) {
     if (!pdfName || !name) return;
     plates.push({
       name,
-      code,  // IAP, APD, DP, STAR, MIN
+      code,  // IAP, APD, DP, STAR, MIN, HOT
       url: `https://aeronav.faa.gov/d-tpp/${cycle}/${pdfName}`,
     });
   });
