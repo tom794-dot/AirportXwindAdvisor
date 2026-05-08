@@ -296,20 +296,27 @@ async function analyze(code) {
   currentIcao = icao;
 
   try {
-    // Fetch runways and wind in parallel
-    const [runways, wind] = await Promise.all([
-      fetchRunways(icao),
-      fetchWind(icao)
-    ]);
-
+    // Fetch runways first — required
+    const runways = await fetchRunways(icao);
     if (!runways || !runways.length) throw new Error(`No runway data for ${icao}. Check ICAO code.`);
 
-    showWindCard(wind, icao);
+    // Fetch wind separately so runway diagram still shows if wind fails
+    let wind;
+    let windErr = '';
+    try {
+      wind = await fetchWind(icao);
+    } catch(e) {
+      wind = {dir:0,spd:0,gust:null,variable:false,calm:true,raw:'',name:'',fcat:''};
+      windErr = ' ⚠ Wind fetch failed: ' + e.message;
+    }
+
+    showWindCard(wind, icao, windErr);
     runways.forEach((rwy, i) => showRunwayCard(rwy, wind, i));
 
-    const dirStr = wind.calm ? 'CALM' : wind.variable ? 'VRB'
+    const dirStr = wind.calm ? 'NO WIND' : wind.variable ? 'VRB'
       : String(wind.dir).padStart(3,'0') + '°';
-    setStatus(`✓  ${runways.length} runways · wind ${dirStr}/${wind.spd}kt${wind.gust?'G'+wind.gust:''}`, 'ok');
+    const spdStr = wind.calm ? '' : `/${wind.spd}kt${wind.gust?'G'+wind.gust:''}`;
+    setStatus(`✓  ${runways.length} runways · wind ${dirStr}${spdStr}${windErr}`, windErr ? 'err' : 'ok');
   } catch(e) {
     setStatus('✗  ' + e.message, 'err');
     document.getElementById('intro').style.display = 'block';
@@ -348,7 +355,8 @@ async function fetchWind(icao) {
       if (txt.includes('KT')) return parseMetarRaw(txt.trim());
     }
   } catch(_) {}
-  return {dir:0,spd:0,gust:null,variable:false,calm:true,raw:'Wind unavailable',name:'',fcat:''};
+  // All strategies failed — throw so UI shows the real error
+  throw new Error('Could not fetch wind for ' + icao + '. Check your connection.');
 }
 
 function tFetch(url, ms=10000) {
@@ -674,7 +682,7 @@ function bestEnd(rwy, wind) {
 }
 
 // ── Wind card ─────────────────────────────────────────────────────────────────
-function showWindCard(wind, icao) {
+function showWindCard(wind, icao, windErr) {
   const dirTxt = wind.calm?'CALM':wind.variable?'VRB':String(wind.dir).padStart(3,'0');
   const fcatClass = wind.fcat ? `fcat-${wind.fcat}` : '';
   const el = document.getElementById('windCard');
