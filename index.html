@@ -331,32 +331,49 @@ function setStatus(html, cls) {
 
 // ── METAR fetch ───────────────────────────────────────────────────────────────
 async function fetchWind(icao) {
-  // Strategy 1: AWC JSON
+  const errors = [];
+
+  // Strategy 1: AWC JSON — best data, has flight category
   try {
     const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&taf=false`);
     if (r.ok) {
       const data = await r.json();
-      if (Array.isArray(data) && data.length) return parseMetarJson(data[0]);
+      if (Array.isArray(data) && data.length) {
+        const w = parseMetarJson(data[0]);
+        if (w.raw) return w;  // only accept if we got actual data back
+      }
+      errors.push('AWC JSON: no data for ' + icao);
+    } else {
+      errors.push('AWC JSON: HTTP ' + r.status);
     }
-  } catch(_) {}
-  // Strategy 2: AWC raw
+  } catch(e) { errors.push('AWC JSON: ' + e.message); }
+
+  // Strategy 2: AWC raw text
   try {
     const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=raw`);
     if (r.ok) {
       const txt = await r.text();
       if (txt.includes('KT')) return parseMetarRaw(txt.trim());
+      errors.push('AWC raw: no KT in response');
+    } else {
+      errors.push('AWC raw: HTTP ' + r.status);
     }
-  } catch(_) {}
-  // Strategy 3: NOAA TGFTP
+  } catch(e) { errors.push('AWC raw: ' + e.message); }
+
+  // Strategy 3: NOAA TGFTP — best for small/GA airports
   try {
     const r = await tFetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`);
     if (r.ok) {
       const txt = await r.text();
       if (txt.includes('KT')) return parseMetarRaw(txt.trim());
+      errors.push('TGFTP: no KT in response');
+    } else {
+      errors.push('TGFTP: HTTP ' + r.status);
     }
-  } catch(_) {}
-  // All strategies failed — throw so UI shows the real error
-  throw new Error('Could not fetch wind for ' + icao + '. Check your connection.');
+  } catch(e) { errors.push('TGFTP: ' + e.message); }
+
+  // All strategies failed — throw with details so UI shows the real error
+  throw new Error(errors.join(' · '));
 }
 
 function tFetch(url, ms=10000) {
@@ -367,25 +384,40 @@ function tFetch(url, ms=10000) {
 
 function parseMetarJson(m) {
   const variable = String(m.wdir).toUpperCase() === 'VRB';
+  const spd = parseInt(m.wspd)||0;
+  const calm = spd === 0 && !variable;
   return {
     dir: variable ? 0 : parseInt(m.wdir)||0,
-    spd: parseInt(m.wspd)||0,
+    spd,
     gust: m.wgst ? parseInt(m.wgst) : null,
-    variable, calm: false,
+    variable, calm,
     raw: m.rawOb||'', name: m.name||'', fcat: m.flightCategory||''
   };
 }
 
 function parseMetarRaw(raw) {
-  const line = raw.split('\n').find(l => l.includes('KT')) || raw;
-  const m = line.match(/\b(VRB|\d{3})(\d{2,3})(?:G(\d{2,3}))?KT\b/);
-  if (!m) return {dir:0,spd:0,gust:null,variable:false,calm:true,raw,name:'',fcat:''};
+  // Find the line containing wind data
+  const line = raw.split('\n').find(l => /\d{5}(G\d{2,3})?KT/.test(l) || l.includes('VRB')) || raw;
+
+  // Check for calm wind: 00000KT
+  if (/\b00000KT\b/.test(line)) {
+    return {dir:0,spd:0,gust:null,variable:false,calm:true,raw:line.trim(),name:'',fcat:''};
+  }
+
+  // Match wind group: e.g. 25005KT, 27018G24KT, VRB05KT
+  const m = line.match(/(VRB|\d{3})(\d{2,3})(?:G(\d{2,3}))?KT/);
+  if (!m) return {dir:0,spd:0,gust:null,variable:false,calm:true,raw:line.trim(),name:'',fcat:''};
+
   const variable = m[1]==='VRB';
+  const spd = parseInt(m[2]);
+  // Treat 0 speed as calm even if direction is given
+  const calm = spd === 0 && !variable;
   return {
     dir: variable ? 0 : parseInt(m[1]),
-    spd: parseInt(m[2]),
+    spd,
     gust: m[3] ? parseInt(m[3]) : null,
-    variable, calm: false, raw: line.trim(), name:'', fcat:''
+    variable, calm,
+    raw: line.trim(), name:'', fcat:''
   };
 }
 
@@ -442,7 +474,7 @@ const RUNWAY_DB = {
   'KGRR':[['08L','26R',80.3,260.3,10000,200,'CON'],['17','35',170.1,350.1,7174,150,'CON']],
   'KDSM':[['05','23',50.0,230.0,9002,150,'CON'],['13','31',130.0,310.0,6002,150,'CON'],['18','36',178.0,358.0,3500,75,'ASP']],
   'KOTM':[['04','22',36.0,216.0,5000,100,'ASP'],['13','31',128.0,308.0,3900,75,'ASP']],
-  'KPEA':[['17','35',170.0,350.0,2700,60,'ASP']],
+  'KPEA':[['16','34',163.0,343.0,2700,60,'ASP']],
   'KFDK':[['12','30',119.5,299.5,5220,100,'ASP'],['18','36',175.0,355.0,3000,75,'ASP']],
   'KGAI':[['14','32',136.0,316.0,4200,75,'ASP']],
   'KABE':[['06','24',55.0,235.0,7601,150,'ASP'],['13','31',125.0,305.0,5001,150,'ASP']],
