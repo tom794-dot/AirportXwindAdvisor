@@ -333,46 +333,64 @@ function setStatus(html, cls) {
 async function fetchWind(icao) {
   const errors = [];
 
-  // Strategy 1: AWC JSON — best data, has flight category
+  // All direct fetches go through allorigins proxy to bypass CORS.
+  // aviationweather.gov and tgftp.nws.noaa.gov block browser cross-origin requests.
+  const proxy = url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  const proxy2 = url => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
+  // ── Helper: fetch via proxy and return the inner content string ────────────
+  async function proxyGet(url, label) {
+    // Try allorigins first
+    try {
+      const r = await tFetch(proxy(url), 12000);
+      if (r.ok) {
+        const j = await r.json();
+        const body = j.contents || '';
+        if (body) return body;
+      }
+    } catch(_) {}
+    // Fall back to corsproxy.io
+    try {
+      const r = await tFetch(proxy2(url), 12000);
+      if (r.ok) {
+        const body = await r.text();
+        if (body) return body;
+      }
+    } catch(_) {}
+    errors.push(label + ': proxy failed');
+    return null;
+  }
+
+  // Strategy 1: AWC JSON via proxy
   try {
-    const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&taf=false`);
-    if (r.ok) {
-      const data = await r.json();
+    const url = `https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&taf=false`;
+    const body = await proxyGet(url, 'AWC JSON');
+    if (body) {
+      const data = JSON.parse(body);
       if (Array.isArray(data) && data.length) {
         const w = parseMetarJson(data[0]);
-        if (w.raw) return w;  // only accept if we got actual data back
+        if (w.raw) return w;
       }
-      errors.push('AWC JSON: no data for ' + icao);
-    } else {
-      errors.push('AWC JSON: HTTP ' + r.status);
+      errors.push('AWC JSON: empty for ' + icao);
     }
-  } catch(e) { errors.push('AWC JSON: ' + e.message); }
+  } catch(e) { errors.push('AWC JSON parse: ' + e.message); }
 
-  // Strategy 2: AWC raw text
+  // Strategy 2: AWC raw text via proxy
   try {
-    const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=raw`);
-    if (r.ok) {
-      const txt = await r.text();
-      if (txt.includes('KT')) return parseMetarRaw(txt.trim());
-      errors.push('AWC raw: no KT in response');
-    } else {
-      errors.push('AWC raw: HTTP ' + r.status);
-    }
+    const url = `https://aviationweather.gov/api/data/metar?ids=${icao}&format=raw`;
+    const body = await proxyGet(url, 'AWC raw');
+    if (body && body.includes('KT')) return parseMetarRaw(body.trim());
+    if (body) errors.push('AWC raw: no KT found');
   } catch(e) { errors.push('AWC raw: ' + e.message); }
 
-  // Strategy 3: NOAA TGFTP — best for small/GA airports
+  // Strategy 3: NOAA TGFTP via proxy — most reliable for small/GA airports
   try {
-    const r = await tFetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`);
-    if (r.ok) {
-      const txt = await r.text();
-      if (txt.includes('KT')) return parseMetarRaw(txt.trim());
-      errors.push('TGFTP: no KT in response');
-    } else {
-      errors.push('TGFTP: HTTP ' + r.status);
-    }
+    const url = `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`;
+    const body = await proxyGet(url, 'TGFTP');
+    if (body && body.includes('KT')) return parseMetarRaw(body.trim());
+    if (body) errors.push('TGFTP: no KT found');
   } catch(e) { errors.push('TGFTP: ' + e.message); }
 
-  // All strategies failed — throw with details so UI shows the real error
   throw new Error(errors.join(' · '));
 }
 
