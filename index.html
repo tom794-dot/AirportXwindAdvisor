@@ -189,6 +189,46 @@
     .dismiss{background:none;border:none;color:var(--dim);cursor:pointer;font-size:18px;padding:4px}
 
     footer{padding:16px;text-align:center;font-size:9px;color:var(--dim);letter-spacing:1px;border-top:1px solid var(--rim);margin-top:8px}
+
+    /* ── Approach plates ── */
+    .plates-section{margin-bottom:14px}
+    .plates-header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 14px;background:var(--panel);border:.5px solid var(--rim);
+      border-radius:10px 10px 0 0;cursor:pointer;user-select:none;
+    }
+    .plates-header.collapsed{border-radius:10px}
+    .plates-title{font-family:'Orbitron',monospace;font-size:11px;color:var(--white);letter-spacing:1px}
+    .plates-toggle{font-size:14px;color:var(--dim);transition:transform .2s}
+    .plates-toggle.open{transform:rotate(180deg)}
+    .plates-body{
+      background:var(--panel);border:.5px solid var(--rim);border-top:none;
+      border-radius:0 0 10px 10px;overflow:hidden;display:none;
+    }
+    .plates-body.open{display:block}
+    .plates-loading{padding:14px;font-size:11px;color:var(--dim);text-align:center}
+    .plates-group{border-bottom:.5px solid var(--rim)}
+    .plates-group:last-child{border-bottom:none}
+    .plates-group-label{
+      font-size:9px;color:var(--dim);letter-spacing:1.5px;
+      padding:8px 14px 4px;text-transform:uppercase;
+    }
+    .plate-item{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:8px 14px;border-top:.5px solid var(--rim);
+      text-decoration:none;transition:background .15s;
+    }
+    .plate-item:hover{background:rgba(91,200,245,.06)}
+    .plate-name{font-size:12px;color:var(--white);font-family:'Share Tech Mono',monospace}
+    .plate-type{font-size:9px;padding:2px 7px;border-radius:3px;font-family:'Orbitron',monospace;letter-spacing:.5px;flex-shrink:0}
+    .plate-IAP{background:rgba(91,200,245,.12);color:var(--blue);border:.5px solid rgba(91,200,245,.3)}
+    .plate-APD{background:rgba(57,224,122,.12);color:var(--green);border:.5px solid rgba(57,224,122,.3)}
+    .plate-DP{background:rgba(245,166,35,.12);color:var(--amber);border:.5px solid rgba(245,166,35,.3)}
+    .plate-STAR{background:rgba(240,83,83,.12);color:var(--red);border:.5px solid rgba(240,83,83,.3)}
+    .plate-MIN{background:rgba(74,96,112,.2);color:var(--dim);border:.5px solid rgba(74,96,112,.3)}
+    .plate-arrow{color:var(--dim);font-size:12px;margin-left:8px;flex-shrink:0}
+    .plates-error{padding:12px 14px;font-size:11px;color:var(--red)}
+    .plates-none{padding:12px 14px;font-size:11px;color:var(--dim)}
   </style>
 </head>
 <body>
@@ -214,6 +254,7 @@
     <div class="chips" id="chips"></div>
 
     <div class="wind-card" id="windCard"></div>
+    <div id="platesSection" class="plates-section" style="display:none"></div>
     <div id="runwayContainer"></div>
 
     <div class="intro" id="intro">
@@ -312,6 +353,7 @@ async function analyze(code) {
 
     showWindCard(wind, icao, windErr);
     runways.forEach((rwy, i) => showRunwayCard(rwy, wind, i));
+    showPlatesSection(icao);
 
     const dirStr = wind.calm ? 'NO WIND' : wind.variable ? 'VRB'
       : String(wind.dir).padStart(3,'0') + '°';
@@ -1065,6 +1107,150 @@ function drawDashedCircle(ctx,cx,cy,r,color,lw,dashAng,gapAng) {
     }
     a+=sweep; drawing=!drawing;
   }
+}
+
+// ── Approach Plates — FAA d-TPP ──────────────────────────────────────────────
+// The FAA publishes all approach plates, airport diagrams, DPs, and STARs
+// as free PDFs on aeronav.faa.gov on a 28-day AIRAC cycle.
+// We fetch the XML metafile to get plate filenames for the requested airport,
+// then render them as clickable links that open the PDF directly.
+
+function currentAiracCycle() {
+  // AIRAC reference: cycle 2601 started 2026-01-23
+  // Each cycle = 28 days, max 13 cycles per year
+  const ref = new Date('2026-01-23');
+  const today = new Date();
+  const daysSince = Math.floor((today - ref) / 86400000);
+  let cycles = Math.floor(daysSince / 28);
+  let year = 26, num = 1 + cycles;
+  while (num > 13) { num -= 13; year++; }
+  // Handle pre-ref dates
+  while (num < 1)  { num += 13; year--; }
+  return `${String(year).padStart(2,'0')}${String(num).padStart(2,'0')}`;
+}
+
+async function fetchPlates(icao) {
+  const cycle = currentAiracCycle();
+  const xmlUrl = `https://aeronav.faa.gov/d-tpp/${cycle}/xml/d-TPP_Metafile.xml`;
+
+  // Fetch via proxy — aeronav.faa.gov needs CORS proxy for browser requests
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(xmlUrl)}`;
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 20000);
+
+  const r = await fetch(proxyUrl, {signal: ctrl.signal});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+
+  const j = await r.json();
+  const xml = j.contents || '';
+  if (!xml) throw new Error('Empty response');
+
+  // Parse XML — find airport matching our ICAO
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xml, 'text/xml');
+
+  // Try icao_ident attribute first, then apt_ident
+  const icaoUpper = icao.toUpperCase();
+  let airportEl = doc.querySelector(`airport[icao_ident="${icaoUpper}"]`);
+  if (!airportEl) {
+    // Some airports use 3-letter ident — strip leading K/P
+    const local = icaoUpper.replace(/^[KP]/, '');
+    airportEl = doc.querySelector(`airport[apt_ident="${local}"]`);
+  }
+  if (!airportEl) return [];
+
+  const plates = [];
+  const records = airportEl.querySelectorAll('record');
+  records.forEach(rec => {
+    const name    = rec.getAttribute('chart_name') || '';
+    const code    = rec.getAttribute('chart_code') || '';
+    const pdfName = rec.getAttribute('pdf_name')   || '';
+    if (!pdfName || !name) return;
+    plates.push({
+      name,
+      code,  // IAP, APD, DP, STAR, MIN
+      url: `https://aeronav.faa.gov/d-tpp/${cycle}/${pdfName}`,
+    });
+  });
+
+  return plates;
+}
+
+function showPlatesSection(icao) {
+  const sec = document.getElementById('platesSection');
+  sec.style.display = 'block';
+
+  // Type labels
+  const typeLabel = {
+    IAP:  'Approach',
+    APD:  'Airport Diagram',
+    DP:   'Departure',
+    STAR: 'Arrival',
+    MIN:  'Minimums',
+    HOT:  'Hotspots',
+  };
+
+  // Render collapsed header with spinner inside
+  sec.innerHTML = `
+    <div class="plates-header" id="platesHdr" onclick="togglePlates()">
+      <span class="plates-title">▸ INSTRUMENT PROCEDURES</span>
+      <span class="plates-toggle" id="platesToggle">▼</span>
+    </div>
+    <div class="plates-body open" id="platesBody">
+      <div class="plates-loading"><span class="spin"></span>Loading FAA approach plates…</div>
+    </div>`;
+
+  fetchPlates(icao).then(plates => {
+    const body = document.getElementById('platesBody');
+    if (!body) return;
+
+    if (!plates.length) {
+      body.innerHTML = `<div class="plates-none">No instrument procedures published for ${icao}.<br>This airport may be VFR-only or not yet in the current cycle.</div>`;
+      return;
+    }
+
+    // Group by chart_code
+    const order = ['APD','IAP','DP','STAR','MIN','HOT'];
+    const groups = {};
+    plates.forEach(p => {
+      const g = p.code || 'OTHER';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(p);
+    });
+
+    let html = '';
+    const codes = [...order.filter(c => groups[c]), ...Object.keys(groups).filter(c => !order.includes(c))];
+    codes.forEach(code => {
+      const label = typeLabel[code] || code;
+      html += `<div class="plates-group">
+        <div class="plates-group-label">${label}</div>`;
+      groups[code].forEach(p => {
+        html += `<a class="plate-item" href="${p.url}" target="_blank" rel="noopener">
+          <span class="plate-name">${p.name}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span class="plate-type plate-${code}">${code}</span>
+            <span class="plate-arrow">↗</span>
+          </span>
+        </a>`;
+      });
+      html += `</div>`;
+    });
+
+    body.innerHTML = html;
+  }).catch(err => {
+    const body = document.getElementById('platesBody');
+    if (body) body.innerHTML = `<div class="plates-error">Could not load plates: ${err.message}</div>`;
+  });
+}
+
+function togglePlates() {
+  const body = document.getElementById('platesBody');
+  const toggle = document.getElementById('platesToggle');
+  const hdr = document.getElementById('platesHdr');
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  toggle.classList.toggle('open', open);
+  hdr.classList.toggle('collapsed', !open);
 }
 
 // ── Service worker ────────────────────────────────────────────────────────────
