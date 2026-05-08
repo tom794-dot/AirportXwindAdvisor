@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#111820"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="X-Wind"/>
+  <title>X-Wind — Runway Crosswind Analyzer</title>
+  <link rel="manifest" href="manifest.json"/>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --ink:   #111820;
+      --glass: #161F2B;
+      --panel: #1C2736;
+      --rim:   #263548;
+      --amber: #f5a623;
+      --green: #39e07a;
+      --red:   #f05353;
+      --blue:  #5bc8f5;
+      --white: #e8edf2;
+      --dim:   #4a6070;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{min-height:100%;background:var(--ink);color:var(--white);font-family:'Share Tech Mono',monospace;overflow-x:hidden}
+
+    /* Grid background */
+    body::before{
+      content:'';position:fixed;inset:0;
+      background-image:
+        linear-gradient(rgba(38,53,72,0.5) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(38,53,72,0.5) 1px,transparent 1px);
+      background-size:40px 40px;
+      pointer-events:none;z-index:0;
+    }
+
+    #app{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column}
+
+    /* ── Header ── */
+    header{
+      padding:14px 16px 12px;
+      border-bottom:1px solid var(--rim);
+      background:rgba(17,24,32,0.95);
+      backdrop-filter:blur(10px);
+      position:sticky;top:0;z-index:100;
+    }
+    .header-inner{max-width:640px;margin:0 auto;display:flex;align-items:center;gap:10px}
+    .app-title{font-family:'Orbitron',monospace;font-size:16px;font-weight:900;color:var(--amber);letter-spacing:3px}
+    .app-sub{font-size:9px;color:var(--dim);letter-spacing:1.5px;margin-top:2px}
+
+    /* ── Search ── */
+    main{flex:1;padding:16px;max-width:640px;margin:0 auto;width:100%}
+    .search-row{display:flex;gap:8px;margin-bottom:10px}
+    input.icao{
+      flex:1;background:var(--panel);border:1px solid var(--rim);
+      color:var(--amber);font-family:'Orbitron',monospace;font-size:22px;
+      font-weight:700;letter-spacing:8px;text-transform:uppercase;text-align:center;
+      padding:14px 12px;border-radius:8px;outline:none;
+      transition:border-color .2s,box-shadow .2s;
+    }
+    input.icao:focus{border-color:var(--amber);box-shadow:0 0 0 2px rgba(245,166,35,.2)}
+    input.icao::placeholder{color:var(--dim);letter-spacing:4px;font-size:16px}
+    .go-btn{
+      width:72px;background:var(--amber);color:var(--ink);border:none;
+      font-family:'Orbitron',monospace;font-weight:700;font-size:13px;
+      letter-spacing:1px;border-radius:8px;cursor:pointer;transition:all .15s;
+    }
+    .go-btn:active{transform:scale(.96)}
+    .go-btn:disabled{opacity:.4;cursor:not-allowed}
+
+    /* ── Status ── */
+    .status{
+      font-family:'Share Tech Mono',monospace;font-size:11px;
+      padding:6px 2px;min-height:22px;
+    }
+    .status.err{color:var(--red)}
+    .status.ok{color:var(--blue)}
+
+    /* ── Quick picks ── */
+    .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{
+      flex-shrink:0;background:var(--panel);border:.5px solid var(--rim);
+      border-radius:4px;padding:5px 14px;font-family:'Share Tech Mono',monospace;
+      font-size:10px;color:var(--dim);letter-spacing:1px;cursor:pointer;
+      transition:all .15s;white-space:nowrap;
+    }
+    .chip:hover{border-color:var(--amber);color:var(--amber)}
+    .chip.active{border-color:var(--amber);color:var(--amber);background:rgba(245,166,35,.08)}
+
+    /* ── Wind card ── */
+    .wind-card{
+      background:var(--panel);border:.5px solid var(--rim);border-radius:10px;
+      padding:18px;margin-bottom:14px;display:none;
+    }
+    .wind-card.show{display:block;animation:fadeUp .3s ease}
+    .apt-name{font-family:'Orbitron',monospace;font-size:12px;color:var(--white);margin-bottom:12px;font-weight:700}
+    .wind-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+    .wstat{text-align:center}
+    .wval{font-family:'Orbitron',monospace;font-size:28px;font-weight:900;line-height:1}
+    .wlbl{font-size:9px;color:var(--dim);letter-spacing:1px;margin-top:3px}
+    .fcat-badge{
+      display:inline-block;font-size:10px;font-family:'Orbitron',monospace;font-weight:700;
+      padding:3px 10px;border-radius:4px;letter-spacing:1px;margin-bottom:10px;
+    }
+    .fcat-VFR{background:rgba(57,224,122,.12);color:var(--green);border:1px solid rgba(57,224,122,.3)}
+    .fcat-MVFR{background:rgba(91,200,245,.12);color:var(--blue);border:1px solid rgba(91,200,245,.3)}
+    .fcat-IFR{background:rgba(240,83,83,.12);color:var(--red);border:1px solid rgba(240,83,83,.3)}
+    .fcat-LIFR{background:rgba(255,105,255,.12);color:#ff69ff;border:1px solid rgba(255,105,255,.3)}
+    .divider{height:.5px;background:var(--rim);margin:10px 0}
+    .metar-raw{font-size:9px;color:var(--dim);word-break:break-all;line-height:1.6}
+
+    /* ── Runway card ── */
+    .rwy-card{
+      background:var(--panel);border:.5px solid var(--rim);border-radius:10px;
+      margin-bottom:14px;overflow:hidden;display:none;
+    }
+    .rwy-card.show{display:block;animation:fadeUp .3s ease}
+    .rwy-header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:12px 14px;border-bottom:.5px solid var(--rim);
+    }
+    .rwy-id{font-family:'Orbitron',monospace;font-size:17px;font-weight:900;color:var(--white);letter-spacing:1px}
+    .rwy-dims{font-size:10px;color:var(--dim);margin-top:3px}
+    .xw-badge{
+      font-family:'Orbitron',monospace;font-size:9px;font-weight:700;
+      padding:4px 10px;border-radius:20px;letter-spacing:.5px;white-space:nowrap;
+    }
+    .xw-good{background:rgba(57,224,122,.12);color:var(--green);border:1px solid rgba(57,224,122,.3)}
+    .xw-mod{background:rgba(245,166,35,.12);color:var(--amber);border:1px solid rgba(245,166,35,.3)}
+    .xw-high{background:rgba(240,83,83,.12);color:var(--red);border:1px solid rgba(240,83,83,.3)}
+
+    /* Canvas */
+    canvas.diagram{
+      width:100%;display:block;background:var(--ink);
+      border-bottom:.5px solid var(--rim);
+      touch-action:none;cursor:grab;
+    }
+    canvas.diagram:active{cursor:grabbing}
+    .zoom-hint{
+      font-size:9px;color:var(--dim);text-align:center;padding:4px;
+      font-family:'Share Tech Mono',monospace;letter-spacing:.5px;
+    }
+
+    /* Component grid */
+    .comp-grid{display:grid;grid-template-columns:1fr 1fr;border-top:.5px solid var(--rim)}
+    .comp-cell{padding:12px 14px;border-right:.5px solid var(--rim);border-bottom:.5px solid var(--rim)}
+    .comp-cell:nth-child(2n){border-right:none}
+    .comp-cell:nth-last-child(-n+2){border-bottom:none}
+    .comp-lbl{font-size:9px;color:var(--dim);letter-spacing:.5px;margin-bottom:4px}
+    .comp-val{font-family:'Orbitron',monospace;font-size:18px;font-weight:700}
+    .comp-sub{font-size:9px;color:var(--dim);margin-top:3px}
+
+    /* Intro */
+    .intro{text-align:center;padding:48px 20px;color:var(--dim)}
+    .intro-icon{font-size:48px;margin-bottom:16px}
+    .intro-title{font-family:'Orbitron',monospace;font-size:12px;color:var(--amber);letter-spacing:2px;margin-bottom:10px}
+    .intro-body{font-size:11px;line-height:2}
+
+    /* Spinner */
+    .spin{
+      display:inline-block;width:11px;height:11px;
+      border:2px solid var(--rim);border-top-color:var(--blue);
+      border-radius:50%;animation:spin .8s linear infinite;
+      vertical-align:middle;margin-right:6px;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes fadeUp{
+      from{opacity:0;transform:translateY(12px)}
+      to{opacity:1;transform:translateY(0)}
+    }
+
+    /* Install banner */
+    .install-bar{
+      display:none;position:fixed;bottom:0;left:0;right:0;
+      background:var(--glass);border-top:1px solid var(--rim);
+      padding:14px 16px;z-index:200;align-items:center;gap:10px;
+    }
+    .install-bar.show{display:flex}
+    .install-text{flex:1;font-size:11px;line-height:1.5}
+    .install-text strong{color:var(--amber);font-family:'Orbitron',monospace;font-size:9px}
+    .install-btn{
+      background:var(--amber);color:var(--ink);border:none;border-radius:6px;
+      font-family:'Orbitron',monospace;font-weight:700;font-size:10px;
+      padding:9px 14px;cursor:pointer;white-space:nowrap;
+    }
+    .dismiss{background:none;border:none;color:var(--dim);cursor:pointer;font-size:18px;padding:4px}
+
+    footer{padding:16px;text-align:center;font-size:9px;color:var(--dim);letter-spacing:1px;border-top:1px solid var(--rim);margin-top:8px}
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="header-inner">
+      <span style="font-size:20px">✈</span>
+      <div>
+        <div class="app-title">X-WIND</div>
+        <div class="app-sub">RUNWAY CROSSWIND ANALYZER</div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="search-row">
+      <input class="icao" id="icaoInput" maxlength="4" placeholder="KORD"
+        autocomplete="off" autocorrect="off" spellcheck="false"/>
+      <button class="go-btn" id="goBtn" onclick="analyze()">GO</button>
+    </div>
+    <div class="status" id="status"></div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="wind-card" id="windCard"></div>
+    <div id="runwayContainer"></div>
+
+    <div class="intro" id="intro">
+      <div class="intro-icon">🛬</div>
+      <div class="intro-title">ENTER AIRPORT CODE</div>
+      <div class="intro-body">
+        Type a 4-letter ICAO code above.<br>
+        Runway data from FAA official sources.<br>
+        Live wind from aviationweather.gov.
+      </div>
+    </div>
+  </main>
+
+  <footer>X-WIND · Live FAA Data · For reference only · Always verify with official sources</footer>
+</div>
+
+<div class="install-bar" id="installBar">
+  <div class="install-text">
+    <strong>INSTALL APP</strong><br>Add X-Wind to your home screen for quick access
+  </div>
+  <button class="install-btn" id="installBtn">INSTALL</button>
+  <button class="dismiss" onclick="document.getElementById('installBar').classList.remove('show')">✕</button>
+</div>
+
+<script>
+// ── Colors ────────────────────────────────────────────────────────────────────
+const C = {
+  ink:'#111820',panel:'#1C2736',rim:'#263548',
+  amber:'#f5a623',green:'#39e07a',red:'#f05353',
+  blue:'#5bc8f5',white:'#e8edf2',dim:'#4a6070'
+};
+
+// ── Quick picks ───────────────────────────────────────────────────────────────
+const QUICK = ['KDSM','KOTM','KPEA','KORD','KLAX','KJFK','KATL','KDEN','KSFO','KBOS'];
+const chipsEl = document.getElementById('chips');
+QUICK.forEach(c => {
+  const el = document.createElement('div');
+  el.className = 'chip'; el.textContent = c; el.dataset.icao = c;
+  el.onclick = () => { document.getElementById('icaoInput').value = c; analyze(c); };
+  chipsEl.appendChild(el);
+});
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentIcao = null;
+
+// ── Enter key ─────────────────────────────────────────────────────────────────
+document.getElementById('icaoInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') analyze();
+});
+
+// ── Install prompt ────────────────────────────────────────────────────────────
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredInstall = e;
+  document.getElementById('installBar').classList.add('show');
+});
+document.getElementById('installBtn').onclick = async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  const r = await deferredInstall.userChoice;
+  if (r.outcome === 'accepted') document.getElementById('installBar').classList.remove('show');
+};
+
+// ── Main analyze ──────────────────────────────────────────────────────────────
+async function analyze(code) {
+  const raw = (code || document.getElementById('icaoInput').value).trim().toUpperCase();
+  if (raw.length < 3) return;
+  const icao = raw.length === 3 ? 'K' + raw : raw;
+
+  document.getElementById('icaoInput').value = icao;
+  document.getElementById('icaoInput').blur();
+  document.getElementById('goBtn').disabled = true;
+  document.getElementById('intro').style.display = 'none';
+  document.getElementById('windCard').className = 'wind-card';
+  document.getElementById('runwayContainer').innerHTML = '';
+  document.querySelectorAll('.chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.icao === icao));
+
+  setStatus(`<span class="spin"></span>Fetching ${icao}…`, '');
+  currentIcao = icao;
+
+  try {
+    // Fetch runways and wind in parallel
+    const [runways, wind] = await Promise.all([
+      fetchRunways(icao),
+      fetchWind(icao)
+    ]);
+
+    if (!runways || !runways.length) throw new Error(`No runway data for ${icao}. Check ICAO code.`);
+
+    showWindCard(wind, icao);
+    runways.forEach((rwy, i) => showRunwayCard(rwy, wind, i));
+
+    const dirStr = wind.calm ? 'CALM' : wind.variable ? 'VRB'
+      : String(wind.dir).padStart(3,'0') + '°';
+    setStatus(`✓  ${runways.length} runways · wind ${dirStr}/${wind.spd}kt${wind.gust?'G'+wind.gust:''}`, 'ok');
+  } catch(e) {
+    setStatus('✗  ' + e.message, 'err');
+    document.getElementById('intro').style.display = 'block';
+  }
+  document.getElementById('goBtn').disabled = false;
+}
+
+function setStatus(html, cls) {
+  const el = document.getElementById('status');
+  el.innerHTML = html; el.className = 'status ' + (cls || '');
+}
+
+// ── METAR fetch ───────────────────────────────────────────────────────────────
+async function fetchWind(icao) {
+  // Strategy 1: AWC JSON
+  try {
+    const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&taf=false`);
+    if (r.ok) {
+      const data = await r.json();
+      if (Array.isArray(data) && data.length) return parseMetarJson(data[0]);
+    }
+  } catch(_) {}
+  // Strategy 2: AWC raw
+  try {
+    const r = await tFetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=raw`);
+    if (r.ok) {
+      const txt = await r.text();
+      if (txt.includes('KT')) return parseMetarRaw(txt.trim());
+    }
+  } catch(_) {}
+  // Strategy 3: NOAA TGFTP
+  try {
+    const r = await tFetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`);
+    if (r.ok) {
+      const txt = await r.text();
+      if (txt.includes('KT')) return parseMetarRaw(txt.trim());
+    }
+  } catch(_) {}
+  return {dir:0,spd:0,gust:null,variable:false,calm:true,raw:'Wind unavailable',name:'',fcat:''};
+}
+
+function tFetch(url, ms=10000) {
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, {signal: ctrl.signal});
+}
+
+function parseMetarJson(m) {
+  const variable = String(m.wdir).toUpperCase() === 'VRB';
+  return {
+    dir: variable ? 0 : parseInt(m.wdir)||0,
+    spd: parseInt(m.wspd)||0,
+    gust: m.wgst ? parseInt(m.wgst) : null,
+    variable, calm: false,
+    raw: m.rawOb||'', name: m.name||'', fcat: m.flightCategory||''
+  };
+}
+
+function parseMetarRaw(raw) {
+  const line = raw.split('\n').find(l => l.includes('KT')) || raw;
+  const m = line.match(/\b(VRB|\d{3})(\d{2,3})(?:G(\d{2,3}))?KT\b/);
+  if (!m) return {dir:0,spd:0,gust:null,variable:false,calm:true,raw,name:'',fcat:''};
+  const variable = m[1]==='VRB';
+  return {
+    dir: variable ? 0 : parseInt(m[1]),
+    spd: parseInt(m[2]),
+    gust: m[3] ? parseInt(m[3]) : null,
+    variable, calm: false, raw: line.trim(), name:'', fcat:''
+  };
+}
+
+// ── Built-in runway DB — loads instantly, no network needed ──────────────────
+// [leId, heId, leHdgTrue, heHdgTrue, lengthFt, widthFt, surface]
+const RUNWAY_DB = {
+  'KATL':[['08L','26R',80.3,260.3,9000,150,'ASP'],['08R','26L',80.3,260.3,9000,150,'ASP'],['09L','27R',90.3,270.3,10000,150,'ASP'],['09R','27L',90.3,270.3,9000,150,'ASP'],['10','28',100.4,280.4,11889,150,'ASP']],
+  'KORD':[['04L','22R',40.3,220.3,7500,200,'ASP'],['04R','22L',40.3,220.3,13000,200,'ASP'],['09L','27R',90.3,270.3,13000,200,'ASP'],['09R','27L',90.3,270.3,10000,200,'ASP'],['10L','28R',100.5,280.5,13000,200,'ASP'],['10R','28L',100.5,280.5,9982,200,'ASP']],
+  'KLAX':[['06L','24R',60.2,240.2,8925,150,'ASP'],['06R','24L',60.2,240.2,11096,150,'ASP'],['07L','25R',70.1,250.1,12091,200,'ASP'],['07R','25L',70.1,250.1,11095,200,'ASP']],
+  'KDFW':[['13L','31R',130.2,310.2,13400,200,'CON'],['13R','31L',130.2,310.2,9301,200,'CON'],['17C','35C',175.4,355.4,13400,200,'CON'],['17L','35R',175.4,355.4,9000,150,'CON'],['17R','35L',175.4,355.4,13400,200,'CON'],['18L','36R',180.1,360.1,13400,200,'CON']],
+  'KDEN':[['07','25',70.1,250.1,12000,150,'CON'],['08','26',80.2,260.2,16000,200,'CON'],['16L','34R',163.8,343.8,12000,150,'CON'],['16R','34L',163.8,343.8,10000,150,'CON'],['17L','35R',173.9,353.9,16000,200,'CON'],['17R','35L',173.9,353.9,12000,150,'CON']],
+  'KJFK':[['04L','22R',40.5,220.5,8400,150,'CON'],['04R','22L',40.5,220.5,11351,150,'CON'],['13L','31R',130.8,310.8,10000,150,'CON'],['13R','31L',130.8,310.8,14572,200,'CON']],
+  'KSFO':[['01L','19R',10.2,190.2,8650,200,'CON'],['01R','19L',10.2,190.2,7650,150,'CON'],['10L','28R',100.1,280.1,11870,200,'CON'],['10R','28L',100.1,280.1,10602,200,'CON']],
+  'KBOS':[['04L','22R',40.4,220.4,10005,200,'ASP'],['04R','22L',40.4,220.4,7000,150,'ASP'],['09','27',90.2,270.2,7000,150,'ASP'],['15R','33L',150.6,330.6,10083,200,'ASP']],
+  'KPHX':[['07L','25R',70.0,250.0,11489,150,'ASP'],['07R','25L',70.0,250.0,10300,150,'ASP'],['08','26',80.0,260.0,7800,150,'ASP']],
+  'KMIA':[['08L','26R',80.3,260.3,10506,200,'CON'],['08R','26L',80.3,260.3,13000,200,'CON'],['09','27',90.2,270.2,9354,150,'CON'],['12','30',120.4,300.4,8600,150,'ASP']],
+  'KLAS':[['01L','19R',10.1,190.1,14512,200,'CON'],['01R','19L',10.1,190.1,11000,150,'CON'],['07L','25R',70.3,250.3,9772,200,'CON'],['07R','25L',70.3,250.3,10525,200,'CON']],
+  'KSEA':[['16L','34R',160.7,340.7,11901,200,'ASP'],['16C','34C',160.7,340.7,9426,150,'ASP'],['16R','34L',160.7,340.7,8500,150,'ASP']],
+  'KEWR':[['04L','22R',40.3,220.3,11000,150,'CON'],['04R','22L',40.3,220.3,6800,150,'CON'],['11','29',110.1,290.1,6800,150,'ASP']],
+  'KMSP':[['04','22',40.2,220.2,8200,150,'CON'],['12L','30R',122.5,302.5,10000,150,'CON'],['12R','30L',122.5,302.5,11006,200,'CON'],['17','35',173.6,353.6,8000,150,'CON']],
+  'KDTW':[['03L','21R',30.4,210.4,10500,200,'CON'],['03R','21L',30.4,210.4,9500,150,'CON'],['04L','22R',40.3,220.3,12003,200,'CON'],['04R','22L',40.3,220.3,10000,150,'CON']],
+  'KCLT':[['05','23',50.1,230.1,10000,150,'CON'],['18C','36C',180.0,360.0,10000,150,'CON'],['18L','36R',180.0,360.0,9000,150,'CON'],['18R','36L',180.0,360.0,7503,150,'CON']],
+  'KIAH':[['08L','26R',80.2,260.2,12001,200,'CON'],['08R','26L',80.2,260.2,10000,150,'CON'],['09','27',90.1,270.1,9000,150,'CON'],['15L','33R',150.3,330.3,12001,200,'CON'],['15R','33L',150.3,330.3,9400,150,'CON']],
+  'KBWI':[['10','28',100.4,280.4,10502,200,'CON'],['15L','33R',150.2,330.2,9500,150,'CON'],['15R','33L',150.2,330.2,6000,150,'ASP']],
+  'KDCA':[['01','19',10.0,190.0,6869,150,'ASP'],['04','22',40.0,220.0,5204,100,'ASP'],['15','33',150.0,330.0,4911,100,'ASP']],
+  'KIAD':[['01L','19R',10.0,190.0,11501,200,'CON'],['01R','19L',10.0,190.0,10501,150,'CON'],['12','30',120.3,300.3,11501,200,'CON']],
+  'KSLC':[['16L','34R',160.4,340.4,12003,200,'CON'],['16R','34L',160.4,340.4,12000,200,'CON'],['17','35',170.2,350.2,9596,150,'CON']],
+  'KMCO':[['17L','35R',170.1,350.1,12005,200,'CON'],['17R','35L',170.1,350.1,10000,150,'CON'],['18L','36R',180.0,360.0,12004,200,'CON'],['18R','36L',180.0,360.0,10000,150,'CON']],
+  'KPHL':[['09L','27R',90.4,270.4,10506,200,'CON'],['09R','27L',90.4,270.4,10500,200,'CON'],['17','35',170.1,350.1,5460,150,'ASP']],
+  'KMDW':[['04L','22R',40.2,220.2,6522,150,'CON'],['04R','22L',40.2,220.2,4967,100,'CON'],['13L','31R',130.5,310.5,6446,150,'CON'],['13R','31L',130.5,310.5,3859,75,'CON']],
+  'KTPA':[['01L','19R',10.0,190.0,8300,150,'CON'],['01R','19L',10.0,190.0,11002,200,'CON']],
+  'KFLL':[['10L','28R',100.3,280.3,9000,150,'CON'],['10R','28L',100.3,280.3,6000,150,'CON']],
+  'KHOU':[['04','22',40.1,220.1,7602,150,'CON'],['12L','30R',120.4,300.4,5149,100,'ASP'],['12R','30L',120.4,300.4,7602,150,'CON']],
+  'KAUS':[['17L','35R',170.2,350.2,12248,200,'CON'],['17R','35L',170.2,350.2,9000,150,'CON']],
+  'KSAT':[['04','22',40.0,220.0,8502,150,'CON'],['13L','31R',130.3,310.3,7499,150,'CON']],
+  'KABQ':[['03','21',30.1,210.1,13793,200,'CON'],['08','26',80.0,260.0,10000,150,'CON']],
+  'KOAK':[['09L','27R',90.3,270.3,10000,200,'CON'],['09R','27L',90.3,270.3,6213,150,'ASP']],
+  'KSJC':[['12L','30R',120.2,300.2,11000,200,'CON'],['12R','30L',120.2,300.2,4599,100,'ASP']],
+  'KPDX':[['10L','28R',100.4,280.4,11000,200,'CON'],['10R','28L',100.4,280.4,8800,150,'CON'],['21','03',210.2,30.2,6000,150,'ASP']],
+  'KSAN':[['09','27',90.0,270.0,9401,200,'CON']],
+  'KBNA':[['02L','20R',20.1,200.1,11030,200,'CON'],['02R','20L',20.1,200.1,8000,150,'CON'],['13','31',130.2,310.2,7700,150,'CON']],
+  'KMEM':[['09','27',90.1,270.1,9320,200,'CON'],['18L','36R',180.0,360.0,9000,150,'CON'],['18R','36L',180.0,360.0,8946,150,'CON']],
+  'KIND':[['05L','23R',50.2,230.2,11200,200,'CON'],['05R','23L',50.2,230.2,9000,150,'CON'],['14','32',140.3,320.3,7000,150,'CON']],
+  'KRDU':[['05L','23R',50.3,230.3,10000,200,'CON'],['05R','23L',50.3,230.3,7500,150,'CON']],
+  'KPIT':[['10L','28R',100.2,280.2,11500,200,'ASP'],['10R','28L',100.2,280.2,8000,150,'ASP']],
+  'KCVG':[['09','27',90.0,270.0,11000,200,'CON'],['18L','36R',180.0,360.0,8000,150,'CON'],['18R','36L',180.0,360.0,12000,200,'CON']],
+  'KMCI':[['01L','19R',10.0,190.0,9500,150,'CON'],['01R','19L',10.0,190.0,10801,200,'CON']],
+  'KSTL':[['06','24',60.2,240.2,9003,200,'CON'],['11L','29R',110.3,290.3,9000,200,'CON'],['11R','29L',110.3,290.3,7602,150,'CON']],
+  'KMKE':[['01L','19R',10.1,190.1,9690,200,'CON'],['01R','19L',10.1,190.1,6500,150,'CON'],['07L','25R',70.2,250.2,4183,75,'ASP'],['07R','25L',70.2,250.2,8011,150,'CON']],
+  'KOMA':[['14L','32R',140.4,320.4,9502,200,'CON'],['14R','32L',140.4,320.4,8000,150,'CON']],
+  'KTUL':[['08','26',80.1,260.1,10000,150,'CON'],['18L','36R',180.0,360.0,8100,150,'CON']],
+  'KOKC':[['13','31',130.2,310.2,9802,200,'CON'],['17L','35R',170.1,350.1,9800,200,'CON'],['17R','35L',170.1,350.1,7440,150,'CON']],
+  'KBUF':[['05','23',50.4,230.4,8828,200,'CON'],['14','32',140.3,320.3,7161,200,'CON']],
+  'KGRR':[['08L','26R',80.3,260.3,10000,200,'CON'],['17','35',170.1,350.1,7174,150,'CON']],
+  'KDSM':[['05','23',50.0,230.0,9002,150,'CON'],['13','31',130.0,310.0,6002,150,'CON'],['18','36',178.0,358.0,3500,75,'ASP']],
+  'KOTM':[['04','22',36.0,216.0,5000,100,'ASP'],['13','31',128.0,308.0,3900,75,'ASP']],
+  'KPEA':[['17','35',170.0,350.0,2700,60,'ASP']],
+  'KFDK':[['12','30',119.5,299.5,5220,100,'ASP'],['18','36',175.0,355.0,3000,75,'ASP']],
+  'KGAI':[['14','32',136.0,316.0,4200,75,'ASP']],
+  'KABE':[['06','24',55.0,235.0,7601,150,'ASP'],['13','31',125.0,305.0,5001,150,'ASP']],
+  'KBDL':[['06','24',61.0,241.0,9510,200,'ASP'],['15','33',150.0,330.0,4000,100,'ASP']],
+  'KPVD':[['05','23',51.0,231.0,7166,150,'ASP'],['16','34',163.0,343.0,4000,100,'ASP']],
+  'KACK':[['06','24',60.0,240.0,6303,150,'ASP'],['15','33',151.0,331.0,4500,100,'ASP']],
+  'KBTV':[['01','19',10.0,190.0,8321,150,'ASP'],['15','33',150.0,330.0,4000,100,'ASP']],
+  'KMHT':[['06','24',60.0,240.0,7001,150,'ASP'],['17','35',170.0,350.0,4003,100,'ASP']],
+  'KPWM':[['11','29',107.0,287.0,6999,150,'ASP'],['18','36',178.0,358.0,4000,100,'ASP']],
+  'KALB':[['01','19',10.0,190.0,8500,150,'ASP'],['10','28',100.0,280.0,7200,150,'ASP']],
+  'KSYR':[['10','28',97.0,277.0,9003,200,'ASP'],['15','33',150.0,330.0,7500,150,'ASP']],
+  'KROC':[['04','22',40.0,220.0,8001,200,'ASP'],['10','28',100.0,280.0,4000,150,'ASP']],
+  'KBGR':[['15','33',151.0,331.0,11440,200,'ASP']],
+  'KFSD':[['03','21',30.0,210.0,8999,200,'CON'],['15','33',150.0,330.0,5999,150,'CON']],
+  'KFAR':[['09','27',90.0,270.0,9000,150,'ASP'],['18','36',180.0,360.0,5700,100,'ASP']],
+  'KBIS':[['13','31',130.0,310.0,8989,200,'CON'],['21','03',210.0,30.0,8810,150,'CON']],
+  'KLNK':[['14','32',140.0,320.0,12901,200,'CON'],['18','36',180.0,360.0,8649,200,'CON']],
+  'KCOS':[['17L','35R',170.0,350.0,11000,200,'CON'],['17R','35L',170.0,350.0,8270,150,'CON'],['13','31',130.0,310.0,5000,100,'ASP']],
+  'KGJT':[['11','29',110.0,290.0,10501,200,'ASP'],['29','11',290.0,110.0,5500,100,'ASP']],
+  'KASE':[['15','33',150.0,330.0,7004,100,'ASP']],
+  'KELP':[['04','22',40.0,220.0,9029,200,'ASP'],['22','04',220.0,40.0,11010,200,'ASP']],
+  'KMAF':[['16L','34R',160.0,340.0,9501,200,'CON'],['16R','34L',160.0,340.0,8302,200,'CON']],
+  'KAMA':[['04','22',40.0,220.0,13502,300,'CON'],['22','04',220.0,40.0,7400,150,'CON']],
+  'KLBB':[['17L','35R',170.0,350.0,11500,200,'CON'],['17R','35L',170.0,350.0,8001,200,'CON']],
+  'KDAL':[['13L','31R',130.0,310.0,7752,200,'CON'],['13R','31L',130.0,310.0,6009,150,'CON']],
+  'KBTR':[['13','31',130.0,310.0,9004,200,'CON'],['04','22',40.0,220.0,4000,100,'ASP']],
+  'KMSY':[['10','28',100.0,280.0,9000,200,'CON'],['28','10',280.0,100.0,7000,200,'CON']],
+  'KHSV':[['18L','36R',180.0,360.0,12600,200,'CON'],['18R','36L',180.0,360.0,10000,200,'CON']],
+  'KBHM':[['06','24',60.0,240.0,10000,200,'CON'],['18','36',180.0,360.0,7400,150,'CON']],
+  'KGNV':[['07','25',70.0,250.0,8001,200,'CON'],['11','29',110.0,290.0,3002,60,'ASP']],
+  'KTPA':[['01L','19R',10.0,190.0,8300,150,'CON'],['01R','19L',10.0,190.0,11002,200,'CON']],
+  'KDAB':[['07L','25R',70.0,250.0,10500,200,'CON'],['16','34',160.0,340.0,4004,75,'ASP']],
+  'KEYW':[['09','27',90.0,270.0,4800,100,'ASP']],
+  'KSDF':[['11','29',110.0,290.0,10000,200,'CON'],['17L','35R',170.0,350.0,8300,200,'CON'],['17R','35L',170.0,350.0,6000,150,'CON']],
+  'KLEX':[['04','22',40.0,220.0,6000,150,'CON'],['08','26',80.0,260.0,7003,200,'CON']],
+  'KCMI':[['04','22',40.0,220.0,8000,200,'CON'],['14','32',140.0,320.0,5000,100,'ASP']],
+  'KMLI':[['09','27',90.0,270.0,10002,200,'CON'],['27L','09L',270.0,90.0,4501,100,'ASP']],
+  'KDBQ':[['13','31',130.0,310.0,6998,200,'CON'],['18','36',180.0,360.0,5498,150,'CON']],
+  'KCID':[['09','27',90.0,270.0,8000,200,'CON'],['13','31',130.0,310.0,5413,150,'CON']],
+  'KLIT':[['04L','22R',40.0,220.0,8251,200,'CON'],['04R','22L',40.0,220.0,7200,150,'CON'],['18','36',180.0,360.0,4000,75,'ASP']],
+  'KSGF':[['02','20',20.0,200.0,7003,150,'ASP'],['14','32',140.0,320.0,8004,200,'CON']],
+  'KPIA':[['13','31',130.0,310.0,9000,200,'CON'],['22','04',220.0,40.0,4001,100,'ASP']],
+  'KFWA':[['05','23',50.0,230.0,8000,200,'CON'],['32','14',320.0,140.0,7000,200,'CON']],
+  'KBUR':[['08','26',80.0,260.0,6886,150,'ASP'],['15','33',150.3,330.3,5509,100,'ASP']],
+  'KSNA':[['02L','20R',20.1,200.1,5701,100,'ASP'],['02R','20L',20.1,200.1,2887,60,'ASP']],
+  'KONT':[['08L','26R',80.0,260.0,12198,200,'CON'],['08R','26L',80.0,260.0,10200,200,'CON']],
+  'KVNY':[['16L','34R',160.0,340.0,8001,150,'ASP'],['16R','34L',160.0,340.0,4005,75,'ASP']],
+  'KSMO':[['21','03',210.0,30.0,4987,150,'ASP']],
+  'KPAO':[['13','31',130.0,310.0,2443,70,'ASP']],
+  'KCRQ':[['06','24',60.0,240.0,4897,100,'ASP'],['24','06',240.0,60.0,2700,50,'ASP']],
+  'KHNL':[['04L','22R',40.0,220.0,12000,200,'ASP'],['04R','22L',40.0,220.0,9000,150,'ASP'],['08L','26R',80.0,260.0,12000,200,'ASP'],['08R','26L',80.0,260.0,6952,150,'ASP']],
+  'PANC':[['07L','25R',70.0,250.0,10000,200,'ASP'],['07R','25L',70.0,250.0,8900,150,'ASP'],['15','33',150.0,330.0,8500,150,'ASP']],
+  'KBOI':[['10L','28R',100.0,280.0,10000,200,'CON'],['10R','28L',100.0,280.0,9763,200,'CON']],
+  'KBZN':[['12L','30R',120.0,300.0,9003,200,'ASP'],['12R','30L',120.0,300.0,3999,75,'TURF']],
+  'KBIL':[['13L','31R',130.0,310.0,10006,200,'CON'],['13R','31L',130.0,310.0,5002,100,'ASP']],
+  'KMSO':[['11','29',110.0,290.0,9501,200,'ASP'],['29','11',290.0,110.0,4100,75,'ASP']],
+  'KGTF':[['03','21',30.0,210.0,10502,200,'ASP'],['21','03',210.0,30.0,5001,100,'ASP']],
+  'KGEG':[['03','21',30.0,210.0,11002,200,'CON'],['21','03',210.0,30.0,8000,150,'CON']],
+  'KBLI':[['16L','34R',160.0,340.0,8870,200,'ASP'],['16R','34L',160.0,340.0,3001,60,'ASP']],
+  'KPDX':[['10L','28R',100.4,280.4,11000,200,'CON'],['10R','28L',100.4,280.4,8800,150,'CON'],['21','03',210.2,30.2,6000,150,'ASP']],
+  'KEUG':[['16L','34R',160.0,340.0,9000,200,'ASP'],['16R','34L',160.0,340.0,5200,100,'ASP']],
+  'KMFR':[['14','32',140.0,320.0,8800,200,'ASP'],['32','14',320.0,140.0,4000,75,'ASP']],
+  'KRDM':[['05','23',50.0,230.0,7039,200,'ASP'],['23','05',230.0,50.0,3600,75,'ASP']],
+  'KPSC':[['12L','30R',120.0,300.0,7500,150,'ASP'],['12R','30L',120.0,300.0,5000,100,'ASP']],
+  'EGLL':[['09L','27R',90.0,270.0,12802,200,'ASP'],['09R','27L',90.0,270.0,12008,200,'ASP']],
+  'LFPG':[['08L','26R',80.0,260.0,13829,200,'CON'],['08R','26L',80.0,260.0,13780,200,'CON'],['09L','27R',90.0,270.0,11811,200,'CON'],['09R','27L',90.0,270.0,13976,200,'CON']],
+  'EDDF':[['07L','25R',70.0,250.0,13123,200,'CON'],['07R','25L',70.0,250.0,9186,200,'CON'],['18','36',180.0,360.0,13000,200,'CON']],
+  'RJTT':[['04','22',40.0,220.0,9843,200,'ASP'],['16L','34R',160.0,340.0,10499,200,'ASP'],['16R','34L',160.0,340.0,11024,200,'ASP'],['05','23',50.0,230.0,8202,200,'ASP']],
+  'VHHH':[['07L','25R',70.0,250.0,12467,200,'CON'],['07R','25L',70.0,250.0,12467,200,'CON']],
+  'YSSY':[['07','25',70.0,250.0,12999,200,'ASP'],['16L','34R',160.0,340.0,8000,200,'ASP'],['16R','34L',160.0,340.0,12999,200,'ASP']],
+};
+
+function builtinRunways(icao) {
+  const data = RUNWAY_DB[icao];
+  if (!data) return [];
+  return data.map(r => ({leId:r[0],heId:r[1],leH:r[2],heH:r[3],len:r[4],wid:r[5],surf:r[6]}));
+}
+
+// ── Runway fetch ──────────────────────────────────────────────────────────────
+async function fetchRunways(icao) {
+  // 1. Built-in DB — instant, no network, no CORS issues
+  const builtin = builtinRunways(icao);
+  if (builtin.length) return builtin;
+
+  // 2. FAA ArcGIS via CORS proxy (browser can't call it directly)
+  try {
+    const faaUrl = `https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/ArcGIS/rest/services/AM_Runway/FeatureServer/0/query`
+      + `?where=ICAO_ID='${icao}'&outFields=ICAO_ID,DESIGNATOR,SURFACE,RWY_OPER&returnGeometry=true&f=json`;
+    const enc = encodeURIComponent(faaUrl);
+    const r = await tFetch(`https://api.allorigins.win/get?url=${enc}`, 15000);
+    if (r.ok) {
+      const j = await r.json();
+      const data = JSON.parse(j.contents||'{}');
+      const rws = parseFaaRunways(data);
+      if (rws.length) return rws;
+    }
+  } catch(_) {}
+
+  // 3. OurAirports via CORS proxy
+  try {
+    const enc = encodeURIComponent(`https://ourairports.com/airports/${icao}/runways.csv`);
+    const r = await tFetch(`https://api.allorigins.win/get?url=${enc}`, 12000);
+    if (r.ok) {
+      const j = await r.json();
+      const rws = parseCsvRunways(j.contents||'', icao);
+      if (rws.length) return rws;
+    }
+  } catch(_) {}
+
+  // 4. corsproxy.io as second proxy option
+  try {
+    const enc = encodeURIComponent(`https://ourairports.com/airports/${icao}/runways.csv`);
+    const r = await tFetch(`https://corsproxy.io/?${enc}`, 12000);
+    if (r.ok) {
+      const rws = parseCsvRunways(await r.text(), icao);
+      if (rws.length) return rws;
+    }
+  } catch(_) {}
+
+  return [];
+}
+
+function parseFaaRunways(data) {
+  const features = data.features || [];
+  const result = [];
+  for (const f of features) {
+    const attrs = f.attributes || {};
+    const geo   = f.geometry;
+    const rwyOper = String(attrs.RWY_OPER||'');
+    if (rwyOper==='7'||rwyOper==='1') continue;
+    const designator = (attrs.DESIGNATOR||'').trim();
+    if (!designator.includes('/')) continue;
+    const [leId, heId] = designator.split('/').map(s=>s.trim());
+    let leH=0, heH=0, len=0, wid=0;
+    if (geo && geo.rings && geo.rings.length) {
+      const ring = geo.rings[0].map(p => [p[0], p[1]]);
+      [leH, heH] = headingFromPolygon(ring, designator);
+      [len, wid] = polygonDimensions(ring);
+    }
+    const surf = attrs.SURFACE==='1'?'ASP':attrs.SURFACE==='2'?'METAL':'ASP';
+    result.push({leId, heId, len, wid, leH, heH, surf});
+  }
+  return result;
+}
+
+function headingFromPolygon(ring, designator) {
+  const pts = (ring.length>1 && ring[0][0]===ring[ring.length-1][0] && ring[0][1]===ring[ring.length-1][1])
+    ? ring.slice(0,-1) : ring;
+  let maxLen=0, bestBearing=0;
+  for (let i=0; i<pts.length; i++) {
+    const [lon1,lat1] = pts[i];
+    const [lon2,lat2] = pts[(i+1)%pts.length];
+    const latMid = (lat1+lat2)/2 * Math.PI/180;
+    const dx = (lon2-lon1)*Math.cos(latMid)*111319;
+    const dy = (lat2-lat1)*111319;
+    const edgeLen = Math.sqrt(dx*dx+dy*dy);
+    if (edgeLen > maxLen) {
+      maxLen = edgeLen;
+      bestBearing = (Math.atan2(dx,dy)*180/Math.PI + 360) % 360;
+    }
+  }
+  const opp = (bestBearing+180)%360;
+  const leNum = parseInt((designator.split('/')[0]||'').replace(/[LRClrc]/g,''))||0;
+  const leMag = (leNum%37)*10;
+  const diff1 = Math.abs(((bestBearing-leMag)+540)%360-180);
+  const diff2 = Math.abs(((opp-leMag)+540)%360-180);
+  return diff1<=diff2 ? [bestBearing, opp] : [opp, bestBearing];
+}
+
+function polygonDimensions(ring) {
+  const pts = (ring.length>1 && ring[0][0]===ring[ring.length-1][0])
+    ? ring.slice(0,-1) : ring;
+  const edges = [];
+  for (let i=0; i<pts.length; i++) {
+    const [lon1,lat1]=pts[i], [lon2,lat2]=pts[(i+1)%pts.length];
+    const latMid=(lat1+lat2)/2*Math.PI/180;
+    const dx=(lon2-lon1)*Math.cos(latMid)*111319;
+    const dy=(lat2-lat1)*111319;
+    edges.push(Math.sqrt(dx*dx+dy*dy));
+  }
+  edges.sort((a,b)=>a-b);
+  return [Math.round(edges[edges.length-1]*3.28084), Math.round(edges[0]*3.28084)];
+}
+
+function parseCsvRunways(csv, filterIcao) {
+  const lines = csv.trim().split('\n').filter(l=>l.trim());
+  if (lines.length < 2) return [];
+  const hdr = lines[0].split(',').map(h=>h.replace(/"/g,'').trim());
+  const col = name => hdr.indexOf(name);
+  const iApt=col('airport_ident'),iLeId=col('le_ident'),iHeId=col('he_ident');
+  const iLen=col('length_ft'),iWid=col('width_ft');
+  const iLeH=col('le_heading_degT'),iHeH=col('he_heading_degT');
+  const iSurf=col('surface'),iClosed=col('closed');
+  const result=[];
+  for (let i=1; i<lines.length; i++) {
+    const c = parseCsvLine(lines[i]);
+    const g = k => k<0||k>=c.length ? '' : c[k].replace(/"/g,'').trim();
+    if (iApt>=0 && g(iApt).toUpperCase()!==filterIcao.toUpperCase()) continue;
+    if (g(iClosed)==='1') continue;
+    const leId=g(iLeId), len=parseInt(g(iLen))||0;
+    const leH=parseFloat(g(iLeH)), heH=parseFloat(g(iHeH));
+    if (!leId||isNaN(leH)||isNaN(heH)||len<200) continue;
+    result.push({leId,heId:g(iHeId),len,wid:parseInt(g(iWid))||0,leH,heH,surf:g(iSurf)});
+  }
+  return result;
+}
+
+function parseCsvLine(line) {
+  const r=[]; let cur='',inQ=false;
+  for (const c of line) {
+    if(c==='"'){inQ=!inQ}
+    else if(c===','&&!inQ){r.push(cur);cur=''}
+    else cur+=c;
+  }
+  r.push(cur); return r;
+}
+
+// ── Crosswind math ────────────────────────────────────────────────────────────
+function identToMag(ident) {
+  const n = parseInt((ident||'').replace(/[LRClrc]/g,''));
+  if (!n) return 0;
+  if (n===36) return 360;
+  return n * 10;
+}
+
+function calcCrosswind(wind, rwyMag) {
+  if (wind.calm||wind.variable||wind.spd===0) return {hw:0,xw:0};
+  const a = (wind.dir - rwyMag) * Math.PI/180;
+  return {hw: wind.spd*Math.cos(a), xw: wind.spd*Math.sin(a)};
+}
+
+function bestEnd(rwy, wind) {
+  const leMag=identToMag(rwy.leId), heMag=identToMag(rwy.heId);
+  const cwLE=calcCrosswind(wind,leMag), cwHE=calcCrosswind(wind,heMag);
+  if (cwLE.hw>=cwHE.hw) return {endId:rwy.leId,mag:leMag,trueHdg:rwy.leH,cw:cwLE};
+  return {endId:rwy.heId,mag:heMag,trueHdg:rwy.heH,cw:cwHE};
+}
+
+// ── Wind card ─────────────────────────────────────────────────────────────────
+function showWindCard(wind, icao) {
+  const dirTxt = wind.calm?'CALM':wind.variable?'VRB':String(wind.dir).padStart(3,'0');
+  const fcatClass = wind.fcat ? `fcat-${wind.fcat}` : '';
+  const el = document.getElementById('windCard');
+  el.innerHTML = `
+    ${wind.name ? `<div class="apt-name">${wind.name}</div>` : ''}
+    <div class="wind-stats">
+      <div class="wstat"><div class="wval" style="color:${C.blue}">${dirTxt}</div><div class="wlbl">FROM °</div></div>
+      <div class="wstat"><div class="wval" style="color:${C.green}">${wind.spd}</div><div class="wlbl">KT</div></div>
+      <div class="wstat"><div class="wval" style="color:${C.amber}">${wind.gust||'--'}</div><div class="wlbl">GUST KT</div></div>
+    </div>
+    ${wind.fcat ? `<div class="fcat-badge ${fcatClass}">${wind.fcat}</div>` : ''}
+    <div class="divider"></div>
+    <div class="metar-raw">${wind.raw}</div>
+  `;
+  el.className = 'wind-card show';
+}
+
+// ── Runway card ───────────────────────────────────────────────────────────────
+function showRunwayCard(rwy, wind, idx) {
+  const best = bestEnd(rwy, wind);
+  const xa   = Math.abs(best.cw.xw);
+  const [badgeClass, badgeText] = xa>=20 ? ['xw-high','EXCEEDS LIMIT']
+    : xa>=15 ? ['xw-high','HIGH X-WIND']
+    : xa>=8  ? ['xw-mod','MODERATE']
+    :           ['xw-good','FAVORABLE'];
+
+  const hwLabel = best.cw.hw>=0 ? 'HEADWIND' : 'TAILWIND';
+  const hwColor = best.cw.hw>=0 ? C.green : C.amber;
+  const xwSide  = best.cw.xw>0.5 ? '← FROM LEFT' : best.cw.xw<-0.5 ? '→ FROM RIGHT' : 'ALIGNED';
+
+  const gustCW = wind.gust
+    ? calcCrosswind({...wind, spd:wind.gust}, best.mag)
+    : null;
+
+  const card = document.createElement('div');
+  card.className = 'rwy-card show';
+  card.style.animationDelay = (idx*0.06)+'s';
+
+  const cid = 'cvs-'+idx;
+  card.innerHTML = `
+    <div class="rwy-header">
+      <div>
+        <div class="rwy-id">RWY ${rwy.leId}/${rwy.heId}</div>
+        ${rwy.len>0 ? `<div class="rwy-dims">${rwy.len.toLocaleString()} ft${rwy.surf?' · '+rwy.surf:''}</div>` : ''}
+      </div>
+      <div class="xw-badge ${badgeClass}">${badgeText}</div>
+    </div>
+    <canvas class="diagram" id="${cid}" width="640" height="640"></canvas>
+    <div class="zoom-hint">Pinch or scroll to zoom · Drag to pan · Double-tap to reset</div>
+    <div class="comp-grid">
+      <div class="comp-cell">
+        <div class="comp-lbl">${hwLabel}</div>
+        <div class="comp-val" style="color:${hwColor}">${Math.abs(Math.round(best.cw.hw))} KT</div>
+        <div class="comp-sub">RWY ${best.endId}</div>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-lbl">CROSSWIND</div>
+        <div class="comp-val" style="color:${C.blue}">${wind.calm?'--':Math.abs(Math.round(best.cw.xw))+' KT'}</div>
+        <div class="comp-sub">${xwSide}</div>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-lbl">BEST DIRECTION</div>
+        <div class="comp-val" style="color:${C.green};font-size:15px">RWY ${best.endId}</div>
+        <div class="comp-sub">${best.mag}° MAG</div>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-lbl">GUST CROSSWIND</div>
+        <div class="comp-val" style="color:${gustCW?C.blue:C.dim};font-size:15px">${gustCW?Math.abs(Math.round(gustCW.xw))+' KT':'--'}</div>
+        <div class="comp-sub">${gustCW?'AT GUST SPEED':''}</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('runwayContainer').appendChild(card);
+
+  // Draw diagram after DOM insertion
+  requestAnimationFrame(() => {
+    const cvs = document.getElementById(cid);
+    if (!cvs) return;
+    setupZoom(cvs);
+    drawDiagram(cvs, rwy, wind, best);
+  });
+}
+
+// ── Pinch / scroll / drag zoom ────────────────────────────────────────────────
+function setupZoom(cvs) {
+  let scale=1, offX=0, offY=0, baseScale=1, baseX=0, baseY=0;
+  const MIN=0.8, MAX=5;
+  const redraw = () => {
+    const rwy = cvs._rwy, wind = cvs._wind, best = cvs._best;
+    if (rwy&&wind&&best) drawDiagram(cvs,rwy,wind,best,scale,offX,offY);
+  };
+
+  // Pointer events for drag & pinch
+  let ptrs={}, lastDist=null, lastMidX=0, lastMidY=0;
+  cvs.addEventListener('pointerdown', e => {
+    ptrs[e.pointerId]=e; cvs.setPointerCapture(e.pointerId);
+    if (Object.keys(ptrs).length===1) { baseX=offX; baseY=offY; lastDist=null; }
+  });
+  cvs.addEventListener('pointermove', e => {
+    ptrs[e.pointerId]=e;
+    const pArr = Object.values(ptrs);
+    if (pArr.length===2) {
+      const [p1,p2] = pArr;
+      const dist = Math.hypot(p1.clientX-p2.clientX, p1.clientY-p2.clientY);
+      const midX = (p1.clientX+p2.clientX)/2, midY=(p1.clientY+p2.clientY)/2;
+      if (lastDist) {
+        const ratio = dist/lastDist;
+        scale = Math.min(MAX,Math.max(MIN,scale*ratio));
+        offX += (midX-lastMidX); offY += (midY-lastMidY);
+      }
+      lastDist=dist; lastMidX=midX; lastMidY=midY;
+    } else if (pArr.length===1) {
+      offX = baseX + e.movementX; offY = baseY + e.movementY;
+    }
+    redraw();
+  });
+  cvs.addEventListener('pointerup', e => { delete ptrs[e.pointerId]; lastDist=null; });
+  cvs.addEventListener('pointercancel', e => { delete ptrs[e.pointerId]; });
+
+  // Scroll wheel zoom
+  cvs.addEventListener('wheel', e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    scale = Math.min(MAX,Math.max(MIN,scale*delta));
+    redraw();
+  },{passive:false});
+
+  // Double-tap/click reset
+  let lastTap=0;
+  cvs.addEventListener('pointerup', e => {
+    const now=Date.now();
+    if (now-lastTap < 300) { scale=1; offX=0; offY=0; redraw(); }
+    lastTap=now;
+  });
+}
+
+// ── Diagram painter ────────────────────────────────────────────────────────────
+function drawDiagram(cvs, rwy, wind, best, scale=1, offX=0, offY=0) {
+  cvs._rwy=rwy; cvs._wind=wind; cvs._best=best;
+  const ctx = cvs.getContext('2d');
+  const W=cvs.width, H=cvs.height;
+  const cx=W/2, cy=H/2;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(cx+offX, cy+offY);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx,-cy);
+
+  const R = Math.min(cx,cy)*0.48;
+
+  // Background
+  ctx.fillStyle=C.ink; ctx.fillRect(0,0,W,H);
+  ctx.beginPath(); ctx.arc(cx,cy,R*1.02,0,Math.PI*2);
+  ctx.fillStyle='#151F2D'; ctx.fill();
+
+  // Compass ticks
+  for (let i=0;i<36;i++) {
+    const a=(i*10-90)*Math.PI/180;
+    const isC=i%9===0, isM=i%3===0;
+    const inner=R*(isC?.80:isM?.87:.91);
+    const alpha=isC?.65:isM?.45:.25;
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(a)*inner, cy+Math.sin(a)*inner);
+    ctx.lineTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R);
+    ctx.strokeStyle=`rgba(38,53,72,${alpha})`;
+    ctx.lineWidth=isC?2:isM?1.2:.7;
+    ctx.stroke();
+  }
+
+  // Outer ring
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
+  ctx.strokeStyle=C.rim; ctx.lineWidth=1; ctx.stroke();
+
+  // Cardinals
+  [['N',0,C.amber],['E',90,C.dim],['S',180,C.dim],['W',270,C.dim]].forEach(([lbl,deg,col])=>{
+    const a=(deg-90)*Math.PI/180;
+    ctx.font=`bold ${R*.115}px Orbitron,monospace`;
+    ctx.fillStyle=col; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(lbl, cx+Math.cos(a)*R*.71, cy+Math.sin(a)*R*.71);
+  });
+
+  // 30° labels
+  [30,60,120,150,210,240,300,330].forEach(deg=>{
+    const a=(deg-90)*Math.PI/180;
+    ctx.font=`${R*.075}px Share Tech Mono,monospace`;
+    ctx.fillStyle='rgba(74,96,112,.55)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(deg, cx+Math.cos(a)*R*.71, cy+Math.sin(a)*R*.71);
+  });
+
+  // Runway
+  const rLen=R*.75, rWid=Math.max(8,R*.068);
+  const rAngle=(rwy.leH-90)*Math.PI/180;
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(rAngle);
+  ctx.fillStyle='#2E4055';
+  ctx.beginPath();
+  ctx.roundRect(-rLen/2,-rWid/2,rLen,rWid,3);
+  ctx.fill();
+  // Edges
+  const ep = p => {ctx.strokeStyle=`rgba(232,237,242,.22)`;ctx.lineWidth=1.5;ctx.stroke()};
+  ctx.beginPath(); ctx.moveTo(-rLen/2,-rWid/2); ctx.lineTo(rLen/2,-rWid/2); ep();
+  ctx.beginPath(); ctx.moveTo(-rLen/2, rWid/2); ctx.lineTo(rLen/2, rWid/2); ep();
+  // Centerline
+  const dLen=rLen*.07, gLen=rLen*.045;
+  ctx.strokeStyle='rgba(232,237,242,.28)'; ctx.lineWidth=1.5;
+  let x=-rLen/2+10;
+  while(x<rLen/2-10){
+    const end=Math.min(x+dLen,rLen/2-10);
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(end,0); ctx.stroke();
+    x+=dLen+gLen;
+  }
+  // Threshold bars
+  const bW=rLen*.055;
+  [-2,-1,0,1,2].forEach(i=>{
+    const yy=i*rWid*.22;
+    ctx.fillStyle='rgba(232,237,242,.45)';
+    ctx.fillRect(-rLen/2+4,yy-2,bW,4);
+    ctx.fillRect(rLen/2-bW-4,yy-2,bW,4);
+  });
+  ctx.restore();
+
+  // Runway labels
+  const lblR=rLen/2+R*.13, rAngle2=rAngle;
+  ctx.font=`bold ${R*.115}px Orbitron,monospace`;
+  ctx.fillStyle=C.blue; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(rwy.leId, cx+Math.cos(rAngle2+Math.PI)*lblR, cy+Math.sin(rAngle2+Math.PI)*lblR);
+  ctx.fillText(rwy.heId, cx+Math.cos(rAngle2)*lblR,         cy+Math.sin(rAngle2)*lblR);
+
+  // Wind arrow
+  const hasWind = !wind.calm && wind.spd>0 && !wind.variable;
+  if (hasWind) {
+    const fromAng=(wind.dir-90)*Math.PI/180;
+    const toAng=fromAng+Math.PI;
+    const startR=R*.9;
+    const sx=cx+Math.cos(fromAng)*startR, sy=cy+Math.sin(fromAng)*startR;
+    const speedW=3+Math.min(1,wind.spd/40)*4;
+
+    // Shaft
+    ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(cx,cy);
+    ctx.strokeStyle='rgba(240,83,83,.85)'; ctx.lineWidth=speedW; ctx.lineCap='round'; ctx.stroke();
+
+    // Head
+    const hL=R*.1, hA=.42;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.lineTo(cx-hL*Math.cos(toAng-hA), cy-hL*Math.sin(toAng-hA));
+    ctx.lineTo(cx-hL*Math.cos(toAng+hA), cy-hL*Math.sin(toAng+hA));
+    ctx.closePath(); ctx.fillStyle='rgba(240,83,83,.95)'; ctx.fill();
+
+    // Direction label at tail
+    const tailR=startR+R*.12;
+    const lx=cx+Math.cos(fromAng)*Math.min(tailR,R*.97);
+    const ly=cy+Math.sin(fromAng)*Math.min(tailR,R*.97);
+    ctx.font=`bold ${R*.095}px Share Tech Mono,monospace`;
+    ctx.fillStyle='rgba(240,83,83,.9)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(String(wind.dir).padStart(3,'0')+'°', lx, ly);
+
+    // Speed label
+    const pAng=fromAng+Math.PI/2;
+    const midX=(sx+cx)/2, midY=(sy+cy)/2;
+    const spdTxt=wind.spd+(wind.gust?'G'+wind.gust:'')+'KT';
+    ctx.fillText(spdTxt, midX+Math.cos(pAng)*R*.13, midY+Math.sin(pAng)*R*.13);
+
+    // Gust ring
+    if (wind.gust) {
+      const gR=R*(0.18+(wind.gust.clamp?wind.gust.clamp(0,40):Math.min(40,Math.max(0,wind.gust)))/40*.28);
+      drawDashedCircle(ctx,cx,cy,gR,'rgba(245,166,35,.25)',1.5,.25,.18);
+    }
+
+    // Crosswind line
+    const xa=Math.abs(best.cw.xw);
+    if (xa>0.5) {
+      const bestAng=(best.trueHdg-90)*Math.PI/180;
+      const xwDir=best.cw.xw>0?bestAng+Math.PI/2:bestAng-Math.PI/2;
+      const xwLen=Math.min(R*.55,(xa/wind.spd)*R*.7);
+      drawDashedLine(ctx,cx,cy,cx+Math.cos(xwDir)*xwLen,cy+Math.sin(xwDir)*xwLen,'rgba(91,200,245,.55)',2,10,7);
+      ctx.font=`${R*.085}px Share Tech Mono,monospace`;
+      ctx.fillStyle='rgba(91,200,245,.8)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(Math.round(xa)+'KT',
+        cx+Math.cos(xwDir)*(xwLen+R*.12),
+        cy+Math.sin(xwDir)*(xwLen+R*.12));
+    }
+  }
+
+  if (wind.variable) {
+    drawDashedCircle(ctx,cx,cy,R*.3,'rgba(245,166,35,.45)',2,.25,.2);
+    ctx.font=`bold ${R*.095}px Share Tech Mono,monospace`;
+    ctx.fillStyle='rgba(245,166,35,.85)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('VRB '+wind.spd+'KT', cx, cy-R*.52);
+  }
+
+  // Legend
+  const ly=H-R*.1;
+  ctx.fillStyle='rgba(240,83,83,.65)'; ctx.fillRect(R*.05,ly-3,R*.09,3);
+  ctx.font=`${R*.07}px Share Tech Mono,monospace`;
+  ctx.fillStyle='rgba(232,237,242,.3)'; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('WIND', R*.16, ly);
+  drawDashedLine(ctx,R*.44,ly-1.5,R*.53,ly-1.5,'rgba(91,200,245,.5)',2,4,3);
+  ctx.fillText('X-WIND', R*.55, ly);
+
+  ctx.restore();
+}
+
+function drawDashedLine(ctx,x1,y1,x2,y2,color,lw,dashLen,gapLen) {
+  const total=Math.hypot(x2-x1,y2-y1);
+  if(!total)return;
+  const dx=(x2-x1)/total, dy=(y2-y1)/total;
+  ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.lineCap='round';
+  let t=0, drawing=true;
+  while(t<total){
+    const seg=Math.min(drawing?dashLen:gapLen,total-t);
+    if(drawing){
+      ctx.beginPath();
+      ctx.moveTo(x1+dx*t,y1+dy*t);
+      ctx.lineTo(x1+dx*(t+seg),y1+dy*(t+seg));
+      ctx.stroke();
+    }
+    t+=seg; drawing=!drawing;
+  }
+}
+
+function drawDashedCircle(ctx,cx,cy,r,color,lw,dashAng,gapAng) {
+  ctx.strokeStyle=color; ctx.lineWidth=lw;
+  let a=0, drawing=true;
+  while(a<2*Math.PI){
+    const sweep=drawing?dashAng:gapAng;
+    if(drawing){
+      ctx.beginPath();
+      ctx.arc(cx,cy,r,a,Math.min(a+sweep,2*Math.PI));
+      ctx.stroke();
+    }
+    a+=sweep; drawing=!drawing;
+  }
+}
+
+// ── Service worker ────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>
